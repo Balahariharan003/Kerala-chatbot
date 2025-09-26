@@ -16,19 +16,15 @@ function ChatApp() {
   // -------------------------
   const handlePartial = (text) => {
     setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (last.sender === "user" && last.isPartial) {
-        const updated = [...prev];
-        updated[updated.length - 1].text = text;
-        return updated;
-      } else {
-        return [...prev, { sender: "user", text, isPartial: true }];
-      }
+      // Remove existing partials
+      const filtered = prev.filter((msg) => !msg.isPartial);
+      // Add updated partial
+      return [...filtered, { sender: "user", text, isPartial: true }];
     });
   };
 
   // -------------------------
-  // Handle final audio transcript
+  // Final audio transcript
   // -------------------------
   const handleAudio = async (blob) => {
     const formData = new FormData();
@@ -43,14 +39,9 @@ function ChatApp() {
       const finalText = data.reply;
 
       setMessages((prev) => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last.sender === "user" && last.isPartial) {
-          updated[updated.length - 1] = { sender: "user", text: finalText };
-        } else {
-          updated.push({ sender: "user", text: finalText });
-        }
-        return updated;
+        // Remove partial messages
+        const filtered = prev.filter((msg) => !msg.isPartial);
+        return [...filtered, { sender: "user", text: finalText }];
       });
 
       sendToBot(finalText, true); // ✅ mark as voice input
@@ -60,16 +51,16 @@ function ChatApp() {
   };
 
   // -------------------------
-  // Handle text input send
+  // Text input
   // -------------------------
   const handleSend = (text) => {
     if (!text.trim()) return;
     setMessages((prev) => [...prev, { sender: "user", text }]);
-    sendToBot(text, false); // ✅ mark as text input (no TTS)
+    sendToBot(text, false); // mark as text input (no TTS)
   };
 
   // -------------------------
-  // Send text to backend
+  // Send to backend
   // -------------------------
   const sendToBot = async (text, isVoiceInput) => {
     try {
@@ -83,7 +74,6 @@ function ChatApp() {
 
       setMessages((prev) => [...prev, { sender: "bot", text: botText }]);
 
-      // ✅ Only play TTS if the message came from voice input
       if (isVoiceInput) {
         const audioRes = await fetch("http://localhost:8000/tts", {
           method: "POST",
@@ -107,7 +97,7 @@ function ChatApp() {
       </div>
       <div className="input-area">
         <div className="input-wrapper">
-          {/* MicButton with waves and live partial */}
+          {/* MicButton with live partial */}
           <MicButton onAudio={handleAudio} onPartial={handlePartial} />
           <input
             ref={inputRef}
@@ -138,8 +128,4 @@ function ChatApp() {
   );
 }
 
-function App() {
-  return <ChatApp />;
-}
-
-export default App;
+export default ChatApp;

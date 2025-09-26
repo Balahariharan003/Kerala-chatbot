@@ -17,7 +17,6 @@ from dotenv import load_dotenv
 # Load API keys
 # ---------------------------
 load_dotenv()
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 
@@ -52,7 +51,6 @@ class ChatResponse(BaseModel):
 # Helper: Clean Markdown
 # ---------------------------
 def clean_markdown(text: str) -> str:
-    """Remove markdown formatting but preserve paragraph breaks."""
     if not text:
         return ""
     text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
@@ -64,14 +62,12 @@ def clean_markdown(text: str) -> str:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     return "\n\n".join(paragraphs)
 
-
 # ---------------------------
 # Gemini Chat Function
 # ---------------------------
 def generate_text(prompt: str) -> str:
     if prompt.lower().strip() in ["hello", "hi", "hii", "hello?"]:
         return "Hi! I'm your Kerala Agri Chatbot. Ask me about farming, weather, or anything else!"
-
     if "today" in prompt.lower():
         current_date = datetime.now().strftime("%A, %B %d, %Y")
         prompt = f"{prompt} (Current date is {current_date})"
@@ -79,20 +75,12 @@ def generate_text(prompt: str) -> str:
     model = genai.GenerativeModel("gemini-2.5-flash")
     response = model.generate_content(prompt)
 
-    # Clean and structure the response for proper alignment
     cleaned_text = clean_markdown(response.text)
     if cleaned_text:
-        # Split into sentences or key points and format
         sentences = re.split(r'(?<=[.!?])\s+', cleaned_text)
-        formatted_text = ""
-        for sentence in sentences:
-            if sentence.strip():
-                formatted_text += sentence.strip() + " "
-        formatted_text = formatted_text.strip()
-        # Add line breaks for paragraph-like structure
-        return "\n".join(formatted_text.split(". ")[:-1]) + "." if formatted_text.endswith(".") else formatted_text
-    
-    # Clean markdown for plain text output
+        formatted_text = " ".join(s.strip() for s in sentences)
+        return formatted_text.strip()
+
     return clean_markdown(response.text)
 
 # ---------------------------
@@ -109,14 +97,12 @@ async def transcribe_audio_file(file_path: str) -> str:
 # ---------------------------
 # Deepgram TTS Function
 # ---------------------------
-async def async_generate_speech(text: str, filename: str):
+async def generate_speech_file(text: str) -> str:
+    """Generate TTS asynchronously and return MP3 path"""
+    tmp_file = tempfile.mktemp(suffix=".mp3")
     options = SpeakOptions(model="aura-asteria-en", encoding="mp3")
     payload = {"text": text}
-    await deepgram.speak.asyncrest.v("1").save(filename, payload, options)
-
-def generate_speech_file(text: str) -> str:
-    tmp_file = tempfile.mktemp(suffix=".mp3")
-    asyncio.run(async_generate_speech(text, tmp_file))
+    await deepgram.speak.asyncrest.v("1").save(tmp_file, payload, options)
     return tmp_file
 
 # ---------------------------
@@ -124,7 +110,6 @@ def generate_speech_file(text: str) -> str:
 # ---------------------------
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    """Text-based chat (no TTS)"""
     prompt = req.message.strip()
     if not prompt:
         return {"reply": "⚠️ Please enter a valid message."}
@@ -133,13 +118,11 @@ async def chat(req: ChatRequest):
 
 @app.post("/stt")
 async def stt(file: UploadFile = File(...)):
-    """Voice input -> transcript"""
     tmp_file = tempfile.mktemp(suffix=".wav")
     with open(tmp_file, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
     transcript = await transcribe_audio_file(tmp_file)
-
     try:
         os.unlink(tmp_file)
     except:
@@ -149,12 +132,11 @@ async def stt(file: UploadFile = File(...)):
 
 @app.post("/tts")
 async def tts(req: ChatRequest):
-    """Generate TTS MP3 from text and return as audio stream"""
     text = req.message.strip()
     if not text:
         return {"error": "Empty text"}
 
-    mp3_file = generate_speech_file(text)
+    mp3_file = await generate_speech_file(text)
 
     def iterfile():
         with open(mp3_file, "rb") as f:
@@ -168,9 +150,7 @@ async def tts(req: ChatRequest):
 
 @app.get("/stream-chat")
 async def stream_chat(request: Request, query: str):
-    """
-    Streams Gemini bot responses word by word for live typing in frontend.
-    """
+    """Streams Gemini bot responses word by word for live typing in frontend."""
     async def event_generator():
         reply = generate_text(query)
         for word in reply.split():
