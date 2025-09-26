@@ -1,96 +1,114 @@
-import React, { useState, useEffect, useRef } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from "react-router-dom";
-import Login from "./Login";
-import Signup from "./Signup";
+import React, { useState, useRef } from "react";
 import ChatWindow from "./components/ChatWindow";
 import MicButton from "./components/MicButton";
 import "./App.css";
 
-// Protected Route Component
-const ProtectedRoute = ({ children }) => {
-  const user = localStorage.getItem("user");
-  return user ? children : <Navigate to="/login" />;
-};
-
-// Auth Hook
-const useAuth = () => {
-  const [user, setUser] = useState(null);
-
-  useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch (err) {
-        localStorage.removeItem("user");
-      }
-    }
-  }, []);
-
-  return { user };
-};
-
 const initialMessages = [
-  {
-    sender: "bot",
-    text: "👋 Hello! I’m your assistant. Ask me anything!",
-  },
+  { sender: "bot", text: "👋 Hello! I’m your assistant. Ask me anything!" },
 ];
 
 function ChatApp() {
   const [messages, setMessages] = useState(initialMessages);
-  const [showProfileModal, setShowProfileModal] = useState(false);
-  const { user } = useAuth();
   const inputRef = useRef(null);
-  const navigate = useNavigate();
 
+  // -------------------------
+  // Live partial transcript
+  // -------------------------
+  const handlePartial = (text) => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last.sender === "user" && last.isPartial) {
+        const updated = [...prev];
+        updated[updated.length - 1].text = text;
+        return updated;
+      } else {
+        return [...prev, { sender: "user", text, isPartial: true }];
+      }
+    });
+  };
+
+  // -------------------------
+  // Handle final audio transcript
+  // -------------------------
+  const handleAudio = async (blob) => {
+    const formData = new FormData();
+    formData.append("file", blob, "voice.wav");
+
+    try {
+      const res = await fetch("http://localhost:8000/stt", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      const finalText = data.reply;
+
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last.sender === "user" && last.isPartial) {
+          updated[updated.length - 1] = { sender: "user", text: finalText };
+        } else {
+          updated.push({ sender: "user", text: finalText });
+        }
+        return updated;
+      });
+
+      sendToBot(finalText, true); // ✅ mark as voice input
+    } catch (err) {
+      console.error("STT Error:", err);
+    }
+  };
+
+  // -------------------------
+  // Handle text input send
+  // -------------------------
   const handleSend = (text) => {
     if (!text.trim()) return;
-
-    // Add user message
     setMessages((prev) => [...prev, { sender: "user", text }]);
-
-    // Dummy bot response
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { sender: "bot", text: "🤖 I received: " + text },
-      ]);
-    }, 800);
+    sendToBot(text, false); // ✅ mark as text input (no TTS)
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("user");
-    setShowProfileModal(false);
-    navigate("/login");
-  };
+  // -------------------------
+  // Send text to backend
+  // -------------------------
+  const sendToBot = async (text, isVoiceInput) => {
+    try {
+      const res = await fetch("http://localhost:8000/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      const data = await res.json();
+      const botText = data.reply;
 
-  const toggleProfileModal = () => {
-    setShowProfileModal(!showProfileModal);
+      setMessages((prev) => [...prev, { sender: "bot", text: botText }]);
+
+      // ✅ Only play TTS if the message came from voice input
+      if (isVoiceInput) {
+        const audioRes = await fetch("http://localhost:8000/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: botText }),
+        });
+        const audioBlob = await audioRes.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audio.play();
+      }
+    } catch (err) {
+      console.error("Chat/TTS Error:", err);
+    }
   };
 
   return (
     <div className="main-container">
-      {/* Top Navigation */}
-      <div className="top-nav">
-        <div
-          className="profile"
-          onClick={toggleProfileModal}
-          style={{ cursor: "pointer" }}
-        >
-          {user?.firstName?.[0] || "U"}
-        </div>
-      </div>
-
-      {/* Chat Body */}
       <div className="chat-body">
         <ChatWindow messages={messages} />
       </div>
-
-      {/* Input Bar */}
       <div className="input-area">
         <div className="input-wrapper">
-          <MicButton />
+          {/* MicButton with waves and live partial */}
+          <MicButton onAudio={handleAudio} onPartial={handlePartial} />
           <input
             ref={inputRef}
             type="text"
@@ -116,53 +134,12 @@ function ChatApp() {
           </button>
         </div>
       </div>
-
-      {/* Profile Modal */}
-      {showProfileModal && (
-        <div className="profile-modal-overlay" onClick={toggleProfileModal}>
-          <div className="profile-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="profile-modal-header">
-              <div className="profile-avatar-large">
-                {user?.firstName?.[0]}{user?.lastName?.[0]}
-              </div>
-              <div className="profile-info">
-                <h3>
-                  {user?.firstName} {user?.lastName}
-                </h3>
-                <p>{user?.emailOrPhone}</p>
-              </div>
-            </div>
-
-            <div className="profile-modal-body">
-              <div className="profile-option logout-option" onClick={handleLogout}>
-                <span>Logout</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
 function App() {
-  return (
-    <Router>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <ChatApp />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="/login" />} />
-      </Routes>
-    </Router>
-  );
+  return <ChatApp />;
 }
 
 export default App;
