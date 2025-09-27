@@ -342,6 +342,19 @@ body, html, #root {
   border-top: 1px solid #ddd;
   background: #fff;
 }
+.speaking-status {
+  text-align: center;
+  font-size: 14px;
+  color: #555;
+  margin-bottom: 6px;
+  font-style: italic;
+}
+
+.mic-btn.recording {
+  /* optional: highlight mic while recording */
+  background-color: #ffe5e5;
+  border-radius: 50%;
+}
 
 /* Input field */
 .chat-input input {

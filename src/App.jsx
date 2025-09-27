@@ -9,16 +9,23 @@ const initialMessages = [
 
 function ChatApp() {
   const [messages, setMessages] = useState(initialMessages);
+  const [isSpeaking, setIsSpeaking] = useState(false); // ✅ status bar
   const inputRef = useRef(null);
+  const audioRef = useRef(null);
+
+  // -------------------------
+  // Speaking status from Mic
+  // -------------------------
+  const handleRecordingStatus = (isRecording) => {
+    setIsSpeaking(isRecording); // ✅ only state, no chat bubble
+  };
 
   // -------------------------
   // Live partial transcript
   // -------------------------
   const handlePartial = (text) => {
     setMessages((prev) => {
-      // Remove existing partials
       const filtered = prev.filter((msg) => !msg.isPartial);
-      // Add updated partial
       return [...filtered, { sender: "user", text, isPartial: true }];
     });
   };
@@ -31,20 +38,16 @@ function ChatApp() {
     formData.append("file", blob, "voice.wav");
 
     try {
-      const res = await fetch("http://localhost:8000/stt", {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetch("http://localhost:8000/stt", { method: "POST", body: formData });
       const data = await res.json();
       const finalText = data.reply;
 
-      setMessages((prev) => {
-        // Remove partial messages
-        const filtered = prev.filter((msg) => !msg.isPartial);
-        return [...filtered, { sender: "user", text: finalText }];
-      });
+      setMessages((prev) => [
+        ...prev.filter((msg) => !msg.isPartial),
+        { sender: "user", text: finalText },
+      ]);
 
-      sendToBot(finalText, true); // ✅ mark as voice input
+      sendToBot(finalText, true);
     } catch (err) {
       console.error("STT Error:", err);
     }
@@ -56,7 +59,7 @@ function ChatApp() {
   const handleSend = (text) => {
     if (!text.trim()) return;
     setMessages((prev) => [...prev, { sender: "user", text }]);
-    sendToBot(text, false); // mark as text input (no TTS)
+    sendToBot(text, false);
   };
 
   // -------------------------
@@ -75,6 +78,11 @@ function ChatApp() {
       setMessages((prev) => [...prev, { sender: "bot", text: botText }]);
 
       if (isVoiceInput) {
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.src = "";
+        }
+
         const audioRes = await fetch("http://localhost:8000/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -82,7 +90,9 @@ function ChatApp() {
         });
         const audioBlob = await audioRes.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
+
         const audio = new Audio(audioUrl);
+        audioRef.current = audio;
         audio.play();
       }
     } catch (err) {
@@ -96,9 +106,19 @@ function ChatApp() {
         <ChatWindow messages={messages} />
       </div>
       <div className="input-area">
+        {/* ✅ Speaking indicator ABOVE input */}
+        {isSpeaking && (
+          <div className="speaking-status">
+            🎙 User is speaking...
+          </div>
+        )}
+
         <div className="input-wrapper">
-          {/* MicButton with live partial */}
-          <MicButton onAudio={handleAudio} onPartial={handlePartial} />
+          <MicButton
+            onAudio={handleAudio}
+            onPartial={handlePartial}
+            onRecordingStatus={handleRecordingStatus}
+          />
           <input
             ref={inputRef}
             type="text"

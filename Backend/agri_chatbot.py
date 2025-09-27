@@ -2,7 +2,7 @@ import os
 import tempfile
 import asyncio
 import re
-from fastapi import FastAPI, UploadFile, File, Request
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -10,7 +10,6 @@ from datetime import datetime
 from deepgram import DeepgramClient, PrerecordedOptions, SpeakOptions
 import google.generativeai as genai
 import shutil
-import json
 from dotenv import load_dotenv
 
 # ---------------------------
@@ -45,7 +44,7 @@ class ChatRequest(BaseModel):
     message: str
 
 class ChatResponse(BaseModel):
-    reply: str
+    reply: str  # normal text
 
 # ---------------------------
 # Helper: Clean Markdown
@@ -66,22 +65,21 @@ def clean_markdown(text: str) -> str:
 # Gemini Chat Function
 # ---------------------------
 def generate_text(prompt: str) -> str:
+    # Handle greetings
     if prompt.lower().strip() in ["hello", "hi", "hii", "hello?"]:
         return "Hi! I'm your Kerala Agri Chatbot. Ask me about farming, weather, or anything else!"
+
+    # Inject current date if "today" mentioned
     if "today" in prompt.lower():
         current_date = datetime.now().strftime("%A, %B %d, %Y")
         prompt = f"{prompt} (Current date is {current_date})"
 
+    # Call Gemini
     model = genai.GenerativeModel("gemini-2.5-flash")
     response = model.generate_content(prompt)
-
     cleaned_text = clean_markdown(response.text)
-    if cleaned_text:
-        sentences = re.split(r'(?<=[.!?])\s+', cleaned_text)
-        formatted_text = " ".join(s.strip() for s in sentences)
-        return formatted_text.strip()
 
-    return clean_markdown(response.text)
+    return cleaned_text or "Sorry, I couldn't generate a response."
 
 # ---------------------------
 # Deepgram STT Function
@@ -95,15 +93,44 @@ async def transcribe_audio_file(file_path: str) -> str:
         return transcript.strip() if transcript else ""
 
 # ---------------------------
-# Deepgram TTS Function
+# Deepgram TTS Function (with chunking for long text)
 # ---------------------------
+current_tts_task = None  # global for cancelling previous TTS
+
 async def generate_speech_file(text: str) -> str:
-    """Generate TTS asynchronously and return MP3 path"""
-    tmp_file = tempfile.mktemp(suffix=".mp3")
-    options = SpeakOptions(model="aura-asteria-en", encoding="mp3")
-    payload = {"text": text}
-    await deepgram.speak.asyncrest.v("1").save(tmp_file, payload, options)
-    return tmp_file
+    MAX_CHARS = 800  # safe limit per request
+    chunks = []
+
+    while len(text) > MAX_CHARS:
+        split_at = text.rfind(".", 0, MAX_CHARS)
+        if split_at == -1:
+            split_at = text.rfind(" ", 0, MAX_CHARS)
+        if split_at == -1:
+            split_at = MAX_CHARS
+        chunks.append(text[:split_at + 1].strip())
+        text = text[split_at + 1:].strip()
+
+    if text:
+        chunks.append(text)
+
+    # Merge all audio parts
+    final_file = tempfile.mktemp(suffix=".mp3")
+
+    with open(final_file, "wb") as outfile:
+        for chunk in chunks:
+            tmp_file = tempfile.mktemp(suffix=".mp3")
+            options = SpeakOptions(model="aura-asteria-en", encoding="mp3")
+            payload = {"text": chunk}
+            await deepgram.speak.asyncrest.v("1").save(tmp_file, payload, options)
+
+            with open(tmp_file, "rb") as part:
+                outfile.write(part.read())
+            try:
+                os.remove(tmp_file)
+            except:
+                pass
+
+    return final_file
 
 # ---------------------------
 # API Endpoints
@@ -121,22 +148,28 @@ async def stt(file: UploadFile = File(...)):
     tmp_file = tempfile.mktemp(suffix=".wav")
     with open(tmp_file, "wb") as f:
         shutil.copyfileobj(file.file, f)
-
     transcript = await transcribe_audio_file(tmp_file)
     try:
         os.unlink(tmp_file)
     except:
         pass
-
     return {"reply": transcript if transcript else "⚠️ Could not transcribe audio."}
 
 @app.post("/tts")
 async def tts(req: ChatRequest):
+    global current_tts_task
     text = req.message.strip()
     if not text:
         return {"error": "Empty text"}
 
-    mp3_file = await generate_speech_file(text)
+    if current_tts_task and not current_tts_task.done():
+        current_tts_task.cancel()
+
+    current_tts_task = asyncio.create_task(generate_speech_file(text))
+    try:
+        mp3_file = await current_tts_task
+    except asyncio.CancelledError:
+        return {"error": "TTS cancelled due to new input"}
 
     def iterfile():
         with open(mp3_file, "rb") as f:
@@ -147,21 +180,6 @@ async def tts(req: ChatRequest):
             pass
 
     return StreamingResponse(iterfile(), media_type="audio/mpeg")
-
-@app.get("/stream-chat")
-async def stream_chat(request: Request, query: str):
-    """Streams Gemini bot responses word by word for live typing in frontend."""
-    async def event_generator():
-        reply = generate_text(query)
-        for word in reply.split():
-            if await request.is_disconnected():
-                break
-            chunk = json.dumps({"text": word + " "})
-            yield f"data: {chunk}\n\n"
-            await asyncio.sleep(0.05)
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # ---------------------------
 # Run locally

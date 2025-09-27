@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 
-export default function MicButton({ onAudio, onPartial, onTTS }) {
+export default function MicButton({ onAudio, onPartial, onRecordingStatus }) {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -8,6 +8,7 @@ export default function MicButton({ onAudio, onPartial, onTTS }) {
   const handleClick = async () => {
     if (!isRecording) {
       setIsRecording(true);
+      if (onRecordingStatus) onRecordingStatus(true); // notify parent
       audioChunksRef.current = [];
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -25,6 +26,7 @@ export default function MicButton({ onAudio, onPartial, onTTS }) {
 
       mediaRecorder.onstop = async () => {
         clearInterval(interval);
+        if (onRecordingStatus) onRecordingStatus(false); // notify parent
         const blob = new Blob(audioChunksRef.current, { type: "audio/wav" });
         if (onAudio) onAudio(blob);
       };
@@ -37,13 +39,11 @@ export default function MicButton({ onAudio, onPartial, onTTS }) {
   };
 
   const fetchPartialSTT = async (blob) => {
+    if (!blob.size) return "";
     const formData = new FormData();
     formData.append("file", blob, "voice.wav");
     try {
-      const res = await fetch("http://localhost:8000/stt", {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetch("http://localhost:8000/stt", { method: "POST", body: formData });
       const data = await res.json();
       return data.reply || "";
     } catch (e) {
@@ -53,10 +53,7 @@ export default function MicButton({ onAudio, onPartial, onTTS }) {
   };
 
   return (
-    <button
-      className={`mic-btn ${isRecording ? "recording" : ""}`}
-      onClick={handleClick}
-    >
+    <button className={`mic-btn ${isRecording ? "recording" : ""}`} onClick={handleClick}>
       {!isRecording ? (
         "🎤"
       ) : (
@@ -70,27 +67,4 @@ export default function MicButton({ onAudio, onPartial, onTTS }) {
       )}
     </button>
   );
-}
-
-// Helper function to call TTS
-export async function speakText(text) {
-  try {
-    const res = await fetch("http://localhost:8000/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }), // send JSON with 'text'
-    });
-
-    if (!res.ok) {
-      console.error("TTS server error:", await res.text());
-      return;
-    }
-
-    const blob = await res.blob();
-    const audioURL = URL.createObjectURL(blob);
-    const audio = new Audio(audioURL);
-    audio.play();
-  } catch (e) {
-    console.error("TTS fetch error:", e);
-  }
 }
