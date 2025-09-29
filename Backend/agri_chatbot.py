@@ -67,7 +67,7 @@ def clean_markdown(text: str) -> str:
 def generate_text(prompt: str) -> str:
     # Handle greetings
     if prompt.lower().strip() in ["hello", "hi", "hii", "hello?"]:
-        return "Hi! I'm your Kerala Agri Chatbot. Ask me about farming, weather, or anything else!"
+        return "Hello! I’m here to help. What would you like to talk about?"
 
     # Inject current date if "today" mentioned
     if "today" in prompt.lower():
